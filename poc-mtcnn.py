@@ -4,6 +4,13 @@ import numpy as np
 from mtcnn import MTCNN
 import face_recognition
 
+# Limited at 2GB
+import resource
+def set_memory_limit(limit_in_bytes):
+    soft, hard = resource.getrlimit(resource.RLIMIT_AS)
+    resource.setrlimit(resource.RLIMIT_AS, (limit_in_bytes, hard))
+set_memory_limit(2048 * 2048 * 2048)  # Corrected to use 2048 for KB to MB to GB conversion
+
 def detect_and_extract_face(image_path, detector):
     # Load image
     image = cv2.imread(image_path)
