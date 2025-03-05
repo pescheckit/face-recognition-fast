@@ -1,16 +1,30 @@
 import argparse
 import logging
 import time
+import os
+import numpy as np
+
+# Optional: suppress most TensorFlow logs if you want
+os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 
 import cv2
 import psutil
 
 from src.compare_faces import compare_embeddings, cosine_similarity
-from src.face_detection import (detect_face_facerecognition, detect_face_mtcnn,
-                                detect_face_opencv)
-from src.face_embedding import (get_face_embedding_facerecognition,
-                                get_face_embedding_mobilenet,
-                                get_feature_extractor)
+from src.face_detection import (
+    detect_face_opencv,
+    detect_face_mtcnn,
+    detect_face_facerecognition,
+    detect_face_arcface,
+    detect_face_deepface
+)
+from src.face_embedding import (
+    get_face_embedding_facerecognition,
+    get_face_embedding_mobilenet,
+    get_feature_extractor,
+    get_face_embedding_arcface,
+    get_face_embedding_deepface
+)
 from src.utils import cleanup
 
 logger = logging.getLogger(__name__)
@@ -18,6 +32,7 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(message)s"
 )
+
 
 def print_method_info():
     """
@@ -39,22 +54,34 @@ def print_method_info():
    - Cons: Slower and heavier due to TensorFlow.
 
 3) face_recognition (Detection + Embedding)
-   - Both detection and embedding come from face_recognition (dlib).
+   - Detection: Uses `face_recognition.face_locations()` (HOG or CNN-based).
+   - Embedding: 128-d face_recognition embedding from dlib.
    - Pros: Strong all-in-one library for faces, typically very good accuracy on CPU.
    - Cons: Need to compile/install dlib, can be tricky on some platforms.
 
-4) face_recognition (Detection) + MobileNet (Embedding)
-   - Detection: face_recognition (dlib) bounding box.
+4) MTCNN (Detection) + MobileNetV2 (Embedding)
+   - Detection: MTCNN (deep-learning-based) requires TensorFlow.
    - Embedding: General-purpose MobileNetV2 from TensorFlow/Keras, ~1280-d vector.
-   - Pros: Flexible, easy to swap or fine-tune.
+   - Pros: Flexible, good for feature extraction, easy to swap or fine-tune.
    - Cons: Not specialized for face tasks; out-of-the-box accuracy may be lower.
+
+5) ArcFace (Detection + Embedding)
+   - Detection: Uses RetinaFace (deep-learning-based).
+   - Embedding: ArcFace model (InsightFace framework).
+   - Pros: High accuracy, commonly used in industry benchmarks.
+   - Cons: Requires additional frameworks, more complex setup.
+
+6) DeepFace (Detection + Embedding)
+   - A wrapper library supporting multiple backends (Facenet, VGG-Face, ArcFace, etc.).
+   - Detection: Uses `DeepFace.detect_faces()` (configurable backend).
+   - Pros: Quick integration with multiple models, easy to use.
+   - Cons: Requires additional dependencies, heavier than other methods.
 
 Choose the method that best suits your needs based on speed, memory usage, accuracy, and library preferences.
     """
-
-    # Log each line
     for line in info_text.split('\n'):
         logger.info(line)
+
 
 def run_method(method, id_image_path, webcam_image_path):
     """
@@ -69,58 +96,117 @@ def run_method(method, id_image_path, webcam_image_path):
     process = psutil.Process()
     mem_info_start = process.memory_info().rss
 
-    # Face Detection
-    if method == "opencv":
-        id_face = detect_face_opencv(id_image_path)
-        webcam_face = detect_face_opencv(webcam_image_path)
-    elif method == "mtcnn":
-        id_face = detect_face_mtcnn(id_image_path)
-        webcam_face = detect_face_mtcnn(webcam_image_path)
-    elif method == "facerecognition":
-        id_face = detect_face_facerecognition(id_image_path)
-        webcam_face = detect_face_facerecognition(webcam_image_path)
-    elif method == "mobilenet":
-        # Reuse face_recognition for detection
-        id_face = detect_face_facerecognition(id_image_path)
-        webcam_face = detect_face_facerecognition(webcam_image_path)
-    else:
-        logger.info(f"Unknown method '{method}'")
-        return None, None, 0, 0
+    try:
+        # ---------------------- DETECTION ----------------------
+        if method == "opencv":
+            id_face = detect_face_opencv(id_image_path)
+            webcam_face = detect_face_opencv(webcam_image_path)
+            # Convert from BGR to RGB for embedding
+            if id_face is not None:
+                id_face = cv2.cvtColor(id_face, cv2.COLOR_BGR2RGB)
+            if webcam_face is not None:
+                webcam_face = cv2.cvtColor(webcam_face, cv2.COLOR_BGR2RGB)
 
-    if id_face is None or webcam_face is None:
-        logger.info(f"Face not detected in one or both images (method: {method})")
-        return None, None, 0, 0
+        elif method == "mtcnn":
+            id_face = detect_face_mtcnn(id_image_path)
+            webcam_face = detect_face_mtcnn(webcam_image_path)
+            # Convert from BGR to RGB for embedding
+            if id_face is not None:
+                id_face = cv2.cvtColor(id_face, cv2.COLOR_BGR2RGB)
+            if webcam_face is not None:
+                webcam_face = cv2.cvtColor(webcam_face, cv2.COLOR_BGR2RGB)
 
-    # Convert to RGB
-    id_face = cv2.cvtColor(id_face, cv2.COLOR_BGR2RGB)
-    webcam_face = cv2.cvtColor(webcam_face, cv2.COLOR_BGR2RGB)
+        elif method == "facerecognition":
+            id_face = detect_face_facerecognition(id_image_path)
+            webcam_face = detect_face_facerecognition(webcam_image_path)
 
-    # Embedding
-    if method in ["opencv", "mtcnn", "facerecognition"]:
-        id_embedding = get_face_embedding_facerecognition(id_face)
-        webcam_embedding = get_face_embedding_facerecognition(webcam_face)
-    elif method == "mobilenet":
-        model = get_feature_extractor()
-        id_embedding = get_face_embedding_mobilenet(model, id_face)
-        webcam_embedding = get_face_embedding_mobilenet(model, webcam_face)
-    else:
-        logger.info(f"Unknown method '{method}' for embedding.")
-        return None, None, 0, 0
+            if id_face is None or webcam_face is None:
+                logger.warning("[FaceRecognition] No face detected in one or both images.")
+                return None, None, 0, 0
 
-    if id_embedding is None or webcam_embedding is None:
-        logger.info(f"Embedding failed for one or both images (method: {method})")
-        return None, None, 0, 0
+        elif method == "mobilenet":
+            id_face = detect_face_mtcnn(id_image_path)
+            webcam_face = detect_face_mtcnn(webcam_image_path)
+            # Convert from BGR to RGB for embedding
+            if id_face is not None:
+                id_face = cv2.cvtColor(id_face, cv2.COLOR_BGR2RGB)
+            if webcam_face is not None:
+                webcam_face = cv2.cvtColor(webcam_face, cv2.COLOR_BGR2RGB)
 
-    distance = compare_embeddings(id_embedding, webcam_embedding)
-    similarity = cosine_similarity(id_embedding, webcam_embedding)
+        elif method == "arcface":
+            # Already returns RGB in our implementation
+            id_face = detect_face_arcface(id_image_path)
+            webcam_face = detect_face_arcface(webcam_image_path)
 
-    end_time = time.perf_counter()
-    total_time = end_time - start_time
-    mem_info_end = process.memory_info().rss
-    mem_diff = mem_info_end - mem_info_start
+        elif method == "deepface":
+            # Already returns RGB in our implementation
+            id_face = detect_face_deepface(id_image_path)
+            webcam_face = detect_face_deepface(webcam_image_path)
 
-    cleanup()
-    return distance, similarity, total_time, mem_diff
+        else:
+            logger.info(f"Unknown method '{method}'")
+            return None, None, 0, 0
+
+        if id_face is None or webcam_face is None:
+            logger.info(f"Face not detected in one or both images (method: {method})")
+            return None, None, 0, 0
+
+        # ---------------------- EMBEDDING ----------------------
+        if method in ["opencv", "mtcnn", "facerecognition"]:
+            id_embedding = get_face_embedding_facerecognition(id_face)
+            webcam_embedding = get_face_embedding_facerecognition(webcam_face)
+
+        elif method == "mobilenet":
+            model = get_feature_extractor()
+            id_embedding = get_face_embedding_mobilenet(model, id_face)
+            webcam_embedding = get_face_embedding_mobilenet(model, webcam_face)
+
+        elif method == "arcface":
+            id_embedding = get_face_embedding_arcface(id_face)
+            webcam_embedding = get_face_embedding_arcface(webcam_face)
+
+        elif method == "deepface":
+            id_embedding = get_face_embedding_deepface(id_face)
+            webcam_embedding = get_face_embedding_deepface(webcam_face)
+
+        else:
+            logger.info(f"Unknown method '{method}' for embedding.")
+            return None, None, 0, 0
+
+        if id_embedding is None or webcam_embedding is None:
+            logger.info(f"Embedding failed for one or both images (method: {method})")
+            return None, None, 0, 0
+
+        # ---------------------- COMPARE ----------------------
+        # Make sure embeddings are numpy arrays with the same shape
+        id_embedding = np.array(id_embedding, dtype=np.float32)
+        webcam_embedding = np.array(webcam_embedding, dtype=np.float32)
+        
+        # If embeddings are different lengths, we can't compare them
+        if id_embedding.shape != webcam_embedding.shape:
+            logger.info(f"Embedding shapes don't match: {id_embedding.shape} vs {webcam_embedding.shape}")
+            return None, None, 0, 0
+            
+        distance = compare_embeddings(id_embedding, webcam_embedding)
+        similarity = cosine_similarity(id_embedding, webcam_embedding)
+
+        end_time = time.perf_counter()
+        total_time = end_time - start_time
+        mem_info_end = process.memory_info().rss
+        mem_diff = mem_info_end - mem_info_start
+
+        cleanup()
+        return distance, similarity, total_time, mem_diff
+        
+    except Exception as e:
+        logger.error(f"Error in {method} method: {e}")
+        end_time = time.perf_counter()
+        total_time = end_time - start_time
+        mem_info_end = process.memory_info().rss
+        mem_diff = mem_info_end - mem_info_start
+        cleanup()
+        return None, None, total_time, mem_diff
+
 
 def main():
     usage_examples = """
@@ -136,7 +222,7 @@ Examples:
 """
 
     parser = argparse.ArgumentParser(
-        description="Face Recognition using different techniques (OpenCV, MTCNN, face_recognition, MobileNet)",
+        description="Face Recognition using multiple methods (OpenCV, MTCNN, face_recognition, MobileNet, ArcFace, DeepFace).",
         epilog=usage_examples,
         formatter_class=argparse.RawDescriptionHelpFormatter
     )
@@ -158,7 +244,7 @@ Examples:
     parser.add_argument(
         "--method",
         type=str,
-        choices=["opencv", "mtcnn", "facerecognition", "mobilenet"],
+        choices=["opencv", "mtcnn", "facerecognition", "mobilenet", "arcface", "deepface"],
         help="Which method to run (ignored if --benchmark is set)."
     )
     parser.add_argument(
@@ -169,34 +255,38 @@ Examples:
     parser.add_argument(
         "--info",
         action="store_true",
-        help="Show a summary of each method (OpenCV, MTCNN, face_recognition, MobileNet)."
+        help="Show a summary of each method (OpenCV, MTCNN, face_recognition, MobileNet, ArcFace, etc.)."
     )
 
     args = parser.parse_args()
 
-    # If user wants method info, print it and return
+    # If user wants method info
     if args.info:
         print_method_info()
         return
 
-    # If the user calls python main.py with no arguments, let's show help
+    # If no arguments provided at all
     if len(vars(args)) == 0 or (
-        not args.method and 
-        not args.benchmark and 
-        not args.id_image_path and 
+        not args.method and
+        not args.benchmark and
+        not args.id_image_path and
         not args.webcam_image_path
     ):
         parser.print_help()
         return
 
-    # If benchmark is set, we must have two image paths
     if args.benchmark:
+        # We can add the new methods here if we want to benchmark them as well:
+        methods = [
+            "opencv", "mtcnn", "facerecognition",
+            "mobilenet", "arcface", "deepface"
+        ]
+
         if not args.id_image_path or not args.webcam_image_path:
             logger.info("Error: Please provide two image paths for the benchmark.\n")
             parser.print_help()
             return
 
-        methods = ["opencv", "mtcnn", "facerecognition", "mobilenet"]
         results = []
 
         for m in methods:
@@ -228,6 +318,7 @@ Examples:
                 "Method: %15s | Status: %7s | Time: %ss | MemΔ: %d bytes | Distance: %s | Similarity: %s",
                 r["method"], r["status"], r["time_s"], r["mem_diff_bytes"], r["distance"], r["similarity"]
             )
+
     else:
         # Single method usage
         if not args.method:
@@ -249,6 +340,7 @@ Examples:
 
         logger.info(f"Face similarity (cosine similarity): {similarity:.2f}%")
         logger.info(f"Face distance (L2 norm): {distance:.4f}")
+
 
 if __name__ == "__main__":
     main()

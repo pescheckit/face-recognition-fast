@@ -1,10 +1,13 @@
 numpy
 opencv-python-headless
 dlib
-scipy
 face_recognition
 mtcnn
+scipy
 tensorflow==2.15.0
 keras
 Pillow
 psutil
+insightface
+onnxruntime
+deepface
