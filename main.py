@@ -92,9 +92,12 @@ def run_method(method, id_image_path, webcam_image_path):
     start_time = time.perf_counter()
     process = psutil.Process()
     
-    # Get baseline memory and CPU usage before running the method
+    # Get baseline memory usage before running the method
     mem_info_start = process.memory_info().rss
-    cpu_percent_start = process.cpu_percent(interval=None)  # Initialize CPU monitoring
+    
+    # Initialize CPU monitoring - first call to cpu_percent always returns 0.0
+    # so we call it once and discard the result
+    process.cpu_percent(interval=None)
     
     try:
         # ---------------------- DETECTION ----------------------
@@ -196,15 +199,18 @@ def run_method(method, id_image_path, webcam_image_path):
         
         # Get final CPU and memory usage
         mem_info_end = process.memory_info().rss
-        cpu_percent_end = process.cpu_percent(interval=None)
+        
+        # Get CPU percent and normalize by number of cores to get 0-100% range
+        cpu_percent = process.cpu_percent(interval=None)
+        num_cores = psutil.cpu_count(logical=True)  # Get number of logical cores
+        normalized_cpu_percent = min(100.0, cpu_percent / num_cores)  # Normalize to 0-100% range
         
         # Calculate differences
         mem_diff = mem_info_end - mem_info_start
-        cpu_percent = cpu_percent_end  # We use the final CPU percentage 
 
         # Clean up resources
         cleanup()
-        return distance, similarity, total_time, mem_diff, cpu_percent
+        return distance, similarity, total_time, mem_diff, normalized_cpu_percent
         
     except Exception as e:
         logger.error(f"Error in {method} method: {e}")
@@ -213,15 +219,18 @@ def run_method(method, id_image_path, webcam_image_path):
         end_time = time.perf_counter()
         total_time = end_time - start_time
         mem_info_end = process.memory_info().rss
-        cpu_percent_end = process.cpu_percent(interval=None)
+        
+        # Get CPU percent and normalize
+        cpu_percent = process.cpu_percent(interval=None)
+        num_cores = psutil.cpu_count(logical=True)
+        normalized_cpu_percent = min(100.0, cpu_percent / num_cores)
         
         # Calculate differences
         mem_diff = mem_info_end - mem_info_start
-        cpu_percent = cpu_percent_end
         
         # Clean up resources
         cleanup()
-        return None, None, total_time, mem_diff, cpu_percent
+        return None, None, total_time, mem_diff, normalized_cpu_percent
 
 
 def main():
