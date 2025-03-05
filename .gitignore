@@ -1,2 +1,43 @@
+# Byte-compiled / compiled Python files
+*.pyc
+__pycache__/
+*.swp
+*.swo
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Jupyter Notebook checkpoints
+.ipynb_checkpoints/
+
+# macOS files
+.DS_Store
+
+# Windows files
+Thumbs.db
+
+# Logs and crash reports
+*.log
+*.out
+*.err
+
+# Pytest cache
+.pytest_cache/
+
+# Coverage reports
+htmlcov/
+.coverage
+.coverage.*
+.cache
+
+# Build artifacts
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# If you do not want to include your images in version control:
 images/*
-.venv
