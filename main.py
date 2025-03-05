@@ -4,9 +4,6 @@ import time
 import os
 import numpy as np
 
-# Optional: suppress most TensorFlow logs if you want
-os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
-
 import cv2
 import psutil
 
@@ -89,13 +86,16 @@ def run_method(method, id_image_path, webcam_image_path):
     2) Embed the faces.
     3) Compare embeddings.
 
-    Returns: (distance, similarity, total_time_seconds, memory_diff)
-             or (None, None, 0, 0) if detection/embedding fails.
+    Returns: (distance, similarity, total_time_seconds, memory_diff, cpu_percent)
+             or (None, None, 0, 0, 0) if detection/embedding fails.
     """
     start_time = time.perf_counter()
     process = psutil.Process()
+    
+    # Get baseline memory and CPU usage before running the method
     mem_info_start = process.memory_info().rss
-
+    cpu_percent_start = process.cpu_percent(interval=None)  # Initialize CPU monitoring
+    
     try:
         # ---------------------- DETECTION ----------------------
         if method == "opencv":
@@ -122,7 +122,7 @@ def run_method(method, id_image_path, webcam_image_path):
 
             if id_face is None or webcam_face is None:
                 logger.warning("[FaceRecognition] No face detected in one or both images.")
-                return None, None, 0, 0
+                return None, None, 0, 0, 0
 
         elif method == "mobilenet":
             id_face = detect_face_mtcnn(id_image_path)
@@ -145,11 +145,11 @@ def run_method(method, id_image_path, webcam_image_path):
 
         else:
             logger.info(f"Unknown method '{method}'")
-            return None, None, 0, 0
+            return None, None, 0, 0, 0
 
         if id_face is None or webcam_face is None:
             logger.info(f"Face not detected in one or both images (method: {method})")
-            return None, None, 0, 0
+            return None, None, 0, 0, 0
 
         # ---------------------- EMBEDDING ----------------------
         if method in ["opencv", "mtcnn", "facerecognition"]:
@@ -171,11 +171,11 @@ def run_method(method, id_image_path, webcam_image_path):
 
         else:
             logger.info(f"Unknown method '{method}' for embedding.")
-            return None, None, 0, 0
+            return None, None, 0, 0, 0
 
         if id_embedding is None or webcam_embedding is None:
             logger.info(f"Embedding failed for one or both images (method: {method})")
-            return None, None, 0, 0
+            return None, None, 0, 0, 0
 
         # ---------------------- COMPARE ----------------------
         # Make sure embeddings are numpy arrays with the same shape
@@ -185,27 +185,43 @@ def run_method(method, id_image_path, webcam_image_path):
         # If embeddings are different lengths, we can't compare them
         if id_embedding.shape != webcam_embedding.shape:
             logger.info(f"Embedding shapes don't match: {id_embedding.shape} vs {webcam_embedding.shape}")
-            return None, None, 0, 0
+            return None, None, 0, 0, 0
             
         distance = compare_embeddings(id_embedding, webcam_embedding)
         similarity = cosine_similarity(id_embedding, webcam_embedding)
 
+        # Get final metrics
         end_time = time.perf_counter()
         total_time = end_time - start_time
+        
+        # Get final CPU and memory usage
         mem_info_end = process.memory_info().rss
+        cpu_percent_end = process.cpu_percent(interval=None)
+        
+        # Calculate differences
         mem_diff = mem_info_end - mem_info_start
+        cpu_percent = cpu_percent_end  # We use the final CPU percentage 
 
+        # Clean up resources
         cleanup()
-        return distance, similarity, total_time, mem_diff
+        return distance, similarity, total_time, mem_diff, cpu_percent
         
     except Exception as e:
         logger.error(f"Error in {method} method: {e}")
+        
+        # Get final metrics even in case of error
         end_time = time.perf_counter()
         total_time = end_time - start_time
         mem_info_end = process.memory_info().rss
+        cpu_percent_end = process.cpu_percent(interval=None)
+        
+        # Calculate differences
         mem_diff = mem_info_end - mem_info_start
+        cpu_percent = cpu_percent_end
+        
+        # Clean up resources
         cleanup()
-        return None, None, total_time, mem_diff
+        return None, None, total_time, mem_diff, cpu_percent
 
 
 def main():
@@ -290,7 +306,7 @@ Examples:
         results = []
 
         for m in methods:
-            distance, similarity, total_time, mem_diff = run_method(
+            distance, similarity, total_time, mem_diff, cpu_percent = run_method(
                 m, args.id_image_path, args.webcam_image_path
             )
             if distance is None:
@@ -300,6 +316,7 @@ Examples:
                     "similarity": None,
                     "time_s": total_time,
                     "mem_diff_bytes": mem_diff,
+                    "cpu_percent": cpu_percent,
                     "status": "FAILED"
                 })
             else:
@@ -309,14 +326,18 @@ Examples:
                     "similarity": f"{similarity:.2f}%",
                     "time_s": f"{total_time:.4f}",
                     "mem_diff_bytes": mem_diff,
+                    "cpu_percent": cpu_percent,
                     "status": "OK"
                 })
 
         logger.info("\n===== BENCHMARK RESULTS =====")
+        logger.info("%-15s | %-7s | %-8s | %-15s | %-10s | %-12s | %s", 
+                   "Method", "Status", "Time(s)", "Mem Δ(bytes)", "CPU(%)", "Distance", "Similarity")
+        logger.info("-" * 90)
         for r in results:
-            logger.info(
-                "Method: %15s | Status: %7s | Time: %ss | MemΔ: %d bytes | Distance: %s | Similarity: %s",
-                r["method"], r["status"], r["time_s"], r["mem_diff_bytes"], r["distance"], r["similarity"]
+            logger.info("%-15s | %-7s | %-8s | %-15d | %-10.2f | %-12s | %s",
+                r["method"], r["status"], r["time_s"], r["mem_diff_bytes"], 
+                r["cpu_percent"], r["distance"] or "N/A", r["similarity"] or "N/A"
             )
 
     else:
@@ -331,7 +352,7 @@ Examples:
             parser.print_help()
             return
 
-        distance, similarity, _, _ = run_method(
+        distance, similarity, total_time, mem_diff, cpu_percent = run_method(
             args.method, args.id_image_path, args.webcam_image_path
         )
         if distance is None:
@@ -340,6 +361,9 @@ Examples:
 
         logger.info(f"Face similarity (cosine similarity): {similarity:.2f}%")
         logger.info(f"Face distance (L2 norm): {distance:.4f}")
+        logger.info(f"Processing time: {total_time:.4f} seconds")
+        logger.info(f"Memory usage: {mem_diff} bytes")
+        logger.info(f"CPU usage: {cpu_percent:.2f}%")
 
 
 if __name__ == "__main__":

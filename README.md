@@ -121,17 +121,15 @@ python main.py images/id1.png images/front1.png --benchmark
 
 ```
 ===== BENCHMARK RESULTS =====
-Method:          opencv | Status: OK | Time: 0.9981s | MemΔ: 189902848 bytes | Distance: 0.4240 | Similarity: 96.23%
-Method:           mtcnn | Status: OK | Time: 2.0303s | MemΔ: 600047616 bytes | Distance: 0.4421 | Similarity: 95.76%
-Method: facerecognition | Status: OK | Time: 0.7643s | MemΔ: 15212544 bytes | Distance: 0.4290 | Similarity: 96.18%
-Method:       mobilenet | Status: OK | Time: 1.4072s | MemΔ: 38670336 bytes | Distance: 18.9774 | Similarity: 64.26%
-Method:         arcface | Status: OK | Time: 2.2136s | MemΔ: 400027648 bytes | Distance: 2.0415 | Similarity: 95.43%
-Method:        deepface | Status: OK | Time: 1.7379s | MemΔ: 36253696 bytes | Distance: 3.5570 | Similarity: 58.36%
+Method          | Status  | Time(s)  | Mem Δ(bytes)    | CPU(%)     | Distance     | Similarity
+------------------------------------------------------------------------------------------
+opencv          | OK      | 1.0501   | 189919232       | 494.40     | 0.4240       | 96.23%
+mtcnn           | OK      | 2.0564   | 599793664       | 262.10     | 0.4421       | 95.76%
+facerecognition | OK      | 0.7588   | 15278080        | 334.80     | 0.4290       | 96.18%
+mobilenet       | OK      | 1.3226   | 41394176        | 139.90     | 18.9774      | 64.26%
+arcface         | OK      | 2.1251   | 362631168       | 237.20     | 2.0415       | 95.43%
+deepface        | OK      | 1.6154   | 70631424        | 233.50     | 3.5570       | 58.36%
 ```
-
-> **What MemΔ Means:**  
-> - Higher `MemΔ` means the method consumes **more RAM** during execution.
-> - **TensorFlow-based models (MTCNN, MobileNet, ArcFace, DeepFace)** typically use **more memory** than lightweight methods like OpenCV.
 
 ---
 
